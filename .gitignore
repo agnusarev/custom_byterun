@@ -1,0 +1,9 @@
+*.pyc
+.coverage
+htmlcov
+.tox
+MANIFEST
+*.egg-info
+
+.venv/
+.pytest_cache/

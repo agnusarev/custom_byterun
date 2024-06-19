@@ -1,0 +1,9 @@
+[run]
+branch = true
+source = .
+omit = .tox/*
+
+[report]
+partial_branches =
+    (?i)# *pragma[: ]*no *branch
+    elif PY3:
