@@ -10,19 +10,25 @@ parser = argparse.ArgumentParser(
     description="Run Python programs with a Python bytecode interpreter.",
 )
 parser.add_argument(
-    '-m', dest='module', action='store_true',
+    "-m",
+    dest="module",
+    action="store_true",
     help="prog is a module name, not a file name.",
 )
 parser.add_argument(
-    '-v', '--verbose', dest='verbose', action='store_true',
+    "-v",
+    "--verbose",
+    dest="verbose",
+    action="store_true",
     help="trace the execution of the bytecode.",
 )
 parser.add_argument(
-    'prog',
+    "prog",
     help="The program to run.",
 )
 parser.add_argument(
-    'args', nargs=argparse.REMAINDER,
+    "args",
+    nargs=argparse.REMAINDER,
     help="Arguments to pass to the program.",
 )
 args = parser.parse_args()
