@@ -4,26 +4,19 @@
 
 from __future__ import print_function, division
 import dis
-import inspect
 import linecache
 import logging
 import operator
 import sys
 import types
 
-import six
-from six.moves import reprlib
+import reprlib
 
-PY3, PY2 = six.PY3, not six.PY3
-
-from .pyobj import Frame, Block, Method, Function, Generator, Cell
+from .pyobj import Frame, Block, Function, Generator, Cell
 
 log = logging.getLogger(__name__)
 
-if six.PY3:
-    byteint = lambda b: b
-else:
-    byteint = ord
+byteint = lambda b: b
 
 # Create a repr that won't overflow.
 repr_obj = reprlib.Repr()
@@ -288,46 +281,27 @@ class VirtualMachine(object):
             self.jump(block.handler)
             return why
 
-        if PY2:
-            if (
-                block.type == 'finally' or
-                (block.type == 'setup-except' and why == 'exception') or
-                block.type == 'with'
-            ):
-                if why == 'exception':
-                    exctype, value, tb = self.last_exception
-                    self.push(tb, value, exctype)
-                else:
-                    if why in ('return', 'continue'):
-                        self.push(self.return_value)
-                    self.push(why)
+        if (
+            why == 'exception' and
+            block.type in ['setup-except', 'finally']
+        ):
+            self.push_block('except-handler')
+            exctype, value, tb = self.last_exception
+            self.push(tb, value, exctype)
+            # PyErr_Normalize_Exception goes here
+            self.push(tb, value, exctype)
+            why = None
+            self.jump(block.handler)
+            return why
 
-                why = None
-                self.jump(block.handler)
-                return why
+        elif block.type == 'finally':
+            if why in ('return', 'continue'):
+                self.push(self.return_value)
+            self.push(why)
 
-        elif PY3:
-            if (
-                why == 'exception' and
-                block.type in ['setup-except', 'finally']
-            ):
-                self.push_block('except-handler')
-                exctype, value, tb = self.last_exception
-                self.push(tb, value, exctype)
-                # PyErr_Normalize_Exception goes here
-                self.push(tb, value, exctype)
-                why = None
-                self.jump(block.handler)
-                return why
-
-            elif block.type == 'finally':
-                if why in ('return', 'continue'):
-                    self.push(self.return_value)
-                self.push(why)
-
-                why = None
-                self.jump(block.handler)
-                return why
+            why = None
+            self.jump(block.handler)
+            return why
 
         return why
 
@@ -367,7 +341,7 @@ class VirtualMachine(object):
         self.pop_frame()
 
         if why == 'exception':
-            six.reraise(*self.last_exception)
+            raise self.last_exception[0](self.last_exception[1])
 
         return self.return_value
 
@@ -388,7 +362,6 @@ class VirtualMachine(object):
             self.push(*items)
 
     def byte_DUP_TOP_TWO(self):
-        # Py3 only
         a, b = self.popn(2)
         self.push(a, b, a, b)
 
@@ -446,10 +419,7 @@ class VirtualMachine(object):
         elif name in f.f_builtins:
             val = f.f_builtins[name]
         else:
-            if PY2:
-                raise NameError("global name '%s' is not defined" % name)
-            elif PY3:
-                raise NameError("name '%s' is not defined" % name)
+            raise NameError("name '%s' is not defined" % name)
         self.push(val)
 
     def byte_STORE_GLOBAL(self, name):
@@ -617,7 +587,6 @@ class VirtualMachine(object):
         self.push(elts)
 
     def byte_BUILD_SET(self, count):
-        # TODO: Not documented in Py2 docs.
         elts = self.popn(count)
         self.push(set(elts))
 
@@ -631,18 +600,8 @@ class VirtualMachine(object):
         self.push(kvs)
 
     def byte_BUILD_MAP(self, count):
-        # Pushes a new dictionary on to stack.
-        if not(six.PY3 and sys.version_info.minor >= 5):
-            self.push({})
-            return
-        # Pop 2*count items so that
-        # dictionary holds count entries: {..., TOS3: TOS2, TOS1:TOS}
-        # updated in version 3.5
-        kvs = {}
-        for i in range(0, count):
-            key, val = self.popn(2)
-            kvs[key] = val
-        self.push(kvs)
+        self.push({})
+        return
 
     def byte_STORE_MAP(self):
         the_map, val, key = self.popn(3)
@@ -728,16 +687,15 @@ class VirtualMachine(object):
     def byte_JUMP_ABSOLUTE(self, jump):
         self.jump(jump)
 
-    if 0:   # Not in py2.7
-        def byte_JUMP_IF_TRUE(self, jump):
-            val = self.top()
-            if val:
-                self.jump(jump)
+    def byte_JUMP_IF_TRUE(self, jump):
+        val = self.top()
+        if val:
+            self.jump(jump)
 
-        def byte_JUMP_IF_FALSE(self, jump):
-            val = self.top()
-            if not val:
-                self.jump(jump)
+    def byte_JUMP_IF_FALSE(self, jump):
+        val = self.top()
+        if not val:
+            self.jump(jump)
 
     def byte_POP_JUMP_IF_TRUE(self, jump):
         val = self.pop()
@@ -812,7 +770,7 @@ class VirtualMachine(object):
             why = v
             if why in ('return', 'continue'):
                 self.return_value = self.pop()
-            if why == 'silenced':       # PY3
+            if why == 'silenced':
                 block = self.pop_block()
                 assert block.type == 'except-handler'
                 self.unwind_block(block)
@@ -832,77 +790,47 @@ class VirtualMachine(object):
     def byte_POP_BLOCK(self):
         self.pop_block()
 
-    if PY2:
-        def byte_RAISE_VARARGS(self, argc):
-            # NOTE: the dis docs are completely wrong about the order of the
-            # operands on the stack!
-            exctype = val = tb = None
-            if argc == 0:
-                exctype, val, tb = self.last_exception
-            elif argc == 1:
-                exctype = self.pop()
-            elif argc == 2:
-                val = self.pop()
-                exctype = self.pop()
-            elif argc == 3:
-                tb = self.pop()
-                val = self.pop()
-                exctype = self.pop()
+    def byte_RAISE_VARARGS(self, argc):
+        cause = exc = None
+        if argc == 2:
+            cause = self.pop()
+            exc = self.pop()
+        elif argc == 1:
+            exc = self.pop()
+        return self.do_raise(exc, cause)
 
-            # There are a number of forms of "raise", normalize them somewhat.
-            if isinstance(exctype, BaseException):
-                val = exctype
-                exctype = type(val)
-
-            self.last_exception = (exctype, val, tb)
-
-            if tb:
-                return 'reraise'
-            else:
-                return 'exception'
-
-    elif PY3:
-        def byte_RAISE_VARARGS(self, argc):
-            cause = exc = None
-            if argc == 2:
-                cause = self.pop()
-                exc = self.pop()
-            elif argc == 1:
-                exc = self.pop()
-            return self.do_raise(exc, cause)
-
-        def do_raise(self, exc, cause):
-            if exc is None:         # reraise
-                exc_type, val, tb = self.last_exception
-                if exc_type is None:
-                    return 'exception'      # error
-                else:
-                    return 'reraise'
-
-            elif type(exc) == type:
-                # As in `raise ValueError`
-                exc_type = exc
-                val = exc()             # Make an instance.
-            elif isinstance(exc, BaseException):
-                # As in `raise ValueError('foo')`
-                exc_type = type(exc)
-                val = exc
-            else:
+    def do_raise(self, exc, cause):
+        if exc is None:         # reraise
+            exc_type, val, tb = self.last_exception
+            if exc_type is None:
                 return 'exception'      # error
+            else:
+                return 'reraise'
 
-            # If you reach this point, you're guaranteed that
-            # val is a valid exception instance and exc_type is its class.
-            # Now do a similar thing for the cause, if present.
-            if cause:
-                if type(cause) == type:
-                    cause = cause()
-                elif not isinstance(cause, BaseException):
-                    return 'exception'  # error
+        elif type(exc) == type:
+            # As in `raise ValueError`
+            exc_type = exc
+            val = exc()             # Make an instance.
+        elif isinstance(exc, BaseException):
+            # As in `raise ValueError('foo')`
+            exc_type = type(exc)
+            val = exc
+        else:
+            return 'exception'      # error
 
-                val.__cause__ = cause
+        # If you reach this point, you're guaranteed that
+        # val is a valid exception instance and exc_type is its class.
+        # Now do a similar thing for the cause, if present.
+        if cause:
+            if type(cause) == type:
+                cause = cause()
+            elif not isinstance(cause, BaseException):
+                return 'exception'  # error
 
-            self.last_exception = exc_type, val, val.__traceback__
-            return 'exception'
+            val.__cause__ = cause
+
+        self.last_exception = exc_type, val, val.__traceback__
+        return 'exception'
 
     def byte_POP_EXCEPT(self):
         block = self.pop_block()
@@ -914,10 +842,7 @@ class VirtualMachine(object):
         ctxmgr = self.pop()
         self.push(ctxmgr.__exit__)
         ctxmgr_obj = ctxmgr.__enter__()
-        if PY2:
-            self.push_block('with', dest)
-        elif PY3:
-            self.push_block('finally', dest)
+        self.push_block('finally', dest)
         self.push(ctxmgr_obj)
 
     def byte_WITH_CLEANUP_START(self):
@@ -967,64 +892,40 @@ class VirtualMachine(object):
                 exit_func = self.pop(1)
             u = None
         elif issubclass(u, BaseException):
-            if PY2:
-                w, v, u = self.popn(3)
-                exit_func = self.pop()
-                self.push(w, v, u)
-            elif PY3:
-                w, v, u = self.popn(3)
-                tp, exc, tb = self.popn(3)
-                exit_func = self.pop()
-                self.push(tp, exc, tb)
-                self.push(None)
-                self.push(w, v, u)
-                block = self.pop_block()
-                assert block.type == 'except-handler'
-                self.push_block(block.type, block.handler, block.level-1)
+            w, v, u = self.popn(3)
+            tp, exc, tb = self.popn(3)
+            exit_func = self.pop()
+            self.push(tp, exc, tb)
+            self.push(None)
+            self.push(w, v, u)
+            block = self.pop_block()
+            assert block.type == 'except-handler'
+            self.push_block(block.type, block.handler, block.level-1)
         else:       # pragma: no cover
             raise VirtualMachineError("Confused WITH_CLEANUP")
         exit_ret = exit_func(u, v, w)
         err = (u is not None) and bool(exit_ret)
         if err:
-            # An error occurred, and was suppressed
-            if PY2:
-                self.popn(3)
-                self.push(None)
-            elif PY3:
-                self.push('silenced')
+            self.push('silenced')
 
     ## Functions
 
     def byte_MAKE_FUNCTION(self, argc):
-        if PY3:
-            name = self.pop()
-        else:
-            # Pushes a new function object on the stack. TOS is the code
-            # associated with the function. The function object is defined to
-            # have argc default parameters, which are found below TOS.
-            name = None
+        name = self.pop()
         code = self.pop()
         globs = self.frame.f_globals
-        if PY3 and sys.version_info.minor >= 6:
-            closure = self.pop() if (argc & 0x8) else None
-            ann = self.pop() if (argc & 0x4) else None
-            kwdefaults = self.pop() if (argc & 0x2) else None
-            defaults = self.pop() if (argc & 0x1) else None
-            fn = Function(name, code, globs, defaults, kwdefaults, closure, self)
-        else:
-            defaults = self.popn(argc)
-            fn = Function(name, code, globs, defaults, None, None, self)
+        closure = self.pop() if (argc & 0x8) else None
+        ann = self.pop() if (argc & 0x4) else None
+        kwdefaults = self.pop() if (argc & 0x2) else None
+        defaults = self.pop() if (argc & 0x1) else None
+        fn = Function(name, code, globs, defaults, kwdefaults, closure, self)
         self.push(fn)
 
     def byte_LOAD_CLOSURE(self, name):
         self.push(self.frame.cells[name])
 
     def byte_MAKE_CLOSURE(self, argc):
-        if PY3:
-            # TODO: the py3 docs don't mention this change.
-            name = self.pop()
-        else:
-            name = None
+        name = self.pop()
         closure, code = self.popn(2)
         defaults = self.popn(argc)
         globs = self.frame.f_globals
@@ -1053,18 +954,17 @@ class VirtualMachine(object):
         # on the stack. Pops all function arguments, and the function itself
         # off the stack, and pushes the return value.
         # 3.6: Only used for calls with positional args
-        return self.call_function(arg, [], {})
+        # return self.call_function(arg, [], {})
+        try:
+            return self.call_function(arg, [], {})
+        except TypeError:
+            return "exception"
 
     def byte_CALL_FUNCTION_VAR(self, arg):
         args = self.pop()
         return self.call_function(arg, args, {})
 
     def byte_CALL_FUNCTION_KW(self, argc):
-        if not(six.PY3 and sys.version_info.minor >= 6):
-            kwargs = self.pop()
-            return self.call_function(arg, [], kwargs)
-        # changed in 3.6: keyword arguments are packed in a tuple instead
-        # of a dict. argc indicates total number of args.
         kwargnames = self.pop()
         lkwargs = len(kwargnames)
         kwargs = self.popn(lkwargs)
@@ -1089,10 +989,10 @@ class VirtualMachine(object):
         frame = self.frame
         if hasattr(func, 'im_func'):
             # Methods get self as an implicit first parameter.
-            if func.im_self:
+            if func.im_self is not None:
                 posargs.insert(0, func.im_self)
             # The first parameter must be the correct type.
-            if not isinstance(posargs[0], func.im_class):
+            if not isinstance(posargs[0], type(func.im_self)):
                 raise TypeError(
                     'unbound method %s() must be called with %s instance '
                     'as first argument (got %s instance instead)' % (
@@ -1124,7 +1024,7 @@ class VirtualMachine(object):
 
     def byte_CALL_METHOD(self, count):
         posargs = self.popn(count)
-        self.call_function(0, posargs, {}) 
+        self.call_function(0, posargs, {})
 
     def byte_CALL_FINALLY(self, delta):
         self.push(self.frame.f_lasti)
@@ -1221,42 +1121,128 @@ class VirtualMachine(object):
 
     ## And the rest...
 
+    # New in 3.9
+
+    ##############################################################################
+    # Order of function here is the same as in:
+    # https://docs.python.org/3.9/library/dis.htmls#python-bytecode-instructions
+    #
+    # A note about parameter names. Generally they are the same as
+    # what is described above, however there are some slight changes:
+    #
+    # * when a parameter name is `namei` (an int), it appears as
+    #   `name` (a str) below because the lookup on co_names[namei] has
+    #   already been performed in parse_byte_and_args().
+    ##############################################################################
+
+    def byte_RERAISE(self):
+        # FIXME
+        raise RuntimeError("RERAISE not implemented yet")
+        pass
+
+    def byte_WITH_EXCEPT_START(self):
+        # FIXME
+        raise RuntimeError("WITH_EXCEPT_START not implemented yet")
+        pass
+
+    def byte_LOAD_ASSERTION_ERROR(self):
+        """
+        Pushes AssertionError onto the stack. Used by the `assert` statement.
+        """
+        self.push(AssertionError)
+
+    def byte_LIST_TO_TUPLE(self):
+        """
+        Pops a list from the stack and pushes a tuple containing the same values.
+        """
+        self.push(tuple(self.pop()))
+
+    def byte_IS_OP(self, invert: int):
+        """Performs is comparison, or is not if invert is 1."""
+        TOS1, TOS = self.popn(2)
+        if invert:
+            self.push(TOS1 is not TOS)
+        else:
+            self.push(TOS1 is TOS)
+        pass
+
+    def byte_JUMP_IF_NOT_EXC_MATCH(self, target: int):
+        """Tests whether the second value on the stack is an exception
+        matching TOS, and jumps if it is not.  Pops two values from
+        the stack.
+        """
+        TOS1, TOS = self.popn(2)
+        # FIXME: not sure what operation should be used to test not "matches".
+        if not issubclass(TOS1, TOS):
+            self.jump(target)
+        return
+
+    def byte_CONTAINS_OP(self, invert: int):
+        """Performs in comparison, or not in if invert is 1."""
+        TOS1, TOS = self.popn(2)
+        if invert:
+            self.push(TOS1 not in TOS)
+        else:
+            self.push(TOS1 in TOS)
+        return
+
+    def byte_LIST_EXTEND(self, i):
+        """Calls list.extend(TOS1[-i], TOS). Used to build lists."""
+        TOS = self.pop()
+        destination = self.peek(i)
+        assert isinstance(destination, list)
+        destination.extend(TOS)
+
+    def byte_SET_UPDATE(self, i):
+        """Calls set.update(TOS1[-i], TOS). Used to build sets."""
+        TOS = self.pop()
+        destination = self.peek(i)
+        assert isinstance(destination, set)
+        destination.update(TOS)
+
+    def byte_DICT_MERGE(self, i):
+        """Like DICT_UPDATE but raises an exception for duplicate keys."""
+        TOS = self.pop()
+        assert isinstance(TOS, dict)
+        destination = self.peek(i)
+        assert isinstance(destination, dict)
+        dups = set(destination.keys()) & set(TOS.keys())
+        if bool(dups):
+            raise RuntimeError(f"Duplicate keys '{dups}' in DICT_MERGE")
+        destination.update(TOS)
+
+    def byte_DICT_UPDATE(self, i):
+        """Calls dict.update(TOS1[-i], TOS). Used to build dicts."""
+        TOS = self.pop()
+        assert isinstance(TOS, dict)
+        destination = self.peek(i)
+        assert isinstance(destination, dict)
+        destination.update(TOS)
+
     def byte_EXEC_STMT(self):
         stmt, globs, locs = self.popn(3)
-        six.exec_(stmt, globs, locs)
+        exec(stmt, globs, locs)
 
-    if PY2:
-        def byte_BUILD_CLASS(self):
-            name, bases, methods = self.popn(3)
-            self.push(type(name, bases, methods))
+    def byte_LOAD_BUILD_CLASS(self):
+        self.push(self.build_class)
 
+    def byte_STORE_LOCALS(self):
+        self.frame.f_locals = self.pop()
 
-    elif PY3:
-        def byte_LOAD_BUILD_CLASS(self):
-            # New in py3
-            self.push(build_class)
+    def byte_SET_LINENO(self, lineno):
+        self.frame.f_lineno = lineno
 
-        def byte_STORE_LOCALS(self):
-            self.frame.f_locals = self.pop()
-
-    if 0:   # Not in py2.7
-        def byte_SET_LINENO(self, lineno):
-            self.frame.f_lineno = lineno
-
-if PY3:
-    def build_class(func, name, *bases, **kwds):
+    def build_class(self, func, name, *bases, **kwds):
         "Like __build_class__ in bltinmodule.c, but running in the byterun VM."
         if not isinstance(func, Function):
             raise TypeError("func must be a function")
         if not isinstance(name, str):
             raise TypeError("name is not a string")
         metaclass = kwds.pop('metaclass', None)
-        # (We don't just write 'metaclass=None' in the signature above
-        # because that's a syntax error in Py2.)
         if metaclass is None:
             metaclass = type(bases[0]) if bases else type
         if isinstance(metaclass, type):
-            metaclass = calculate_metaclass(metaclass, bases)
+            metaclass = self.calculate_metaclass(metaclass, bases)
 
         try:
             prepare = metaclass.__prepare__
@@ -1280,7 +1266,7 @@ if PY3:
             cell.set(cls)
         return cls
 
-    def calculate_metaclass(metaclass, bases):
+    def calculate_metaclass(self, metaclass, bases):
         "Determine the most derived metatype."
         winner = metaclass
         for base in bases:

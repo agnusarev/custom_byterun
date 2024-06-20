@@ -6,21 +6,13 @@ import re
 import types
 import dis
 
-import six
-import sys
-
-PY3, PY2 = six.PY3, not six.PY3
-
 
 def make_cell(value):
     # Thanks to Alex Gaynor for help with this bit of twistiness.
     # Construct an actual cell object by creating a closure right here,
     # and grabbing the cell object out of the function we create.
     fn = (lambda x: lambda: x)(value)
-    if PY3:
-        return fn.__closure__[0]
-    else:
-        return fn.func_closure[0]
+    return fn.__closure__[0]
 
 
 class Function(object):
@@ -35,8 +27,7 @@ class Function(object):
         self._vm = vm
         self.func_code = code
         self.func_name = self.__name__ = name or code.co_name
-        self.func_defaults = defaults \
-                if PY3 and sys.version_info.minor >= 6 else tuple(defaults)
+        self.func_defaults = defaults
         self.func_globals = globs
         self.func_locals = self._vm.frame.f_locals
         self.__dict__ = {}
@@ -59,8 +50,6 @@ class Function(object):
     def __get__(self, instance, owner):
         if instance is not None:
             return Method(instance, owner, self)
-        if PY2:
-            return Method(None, owner, self)
         else:
             return self
 
@@ -142,8 +131,7 @@ Block = collections.namedtuple("Block", "type, handler, level")
 class Frame(object):
     def __init__(self, f_code, f_globals, f_locals, f_closure, f_back):
         self.f_code = f_code
-        self.py36_opcodes = list(dis.get_instructions(self.f_code)) \
-            if six.PY3 and sys.version_info.minor >= 6 else None
+        self.py36_opcodes = list(dis.get_instructions(self.f_code))
         self.f_globals = f_globals
         self.f_locals = f_locals
         self.f_back = f_back
@@ -179,8 +167,8 @@ class Frame(object):
         # We don't keep f_lineno up to date, so calculate it based on the
         # instruction address and the line number table.
         lnotab = self.f_code.co_lnotab
-        byte_increments = six.iterbytes(lnotab[0::2])
-        line_increments = six.iterbytes(lnotab[1::2])
+        byte_increments = (lnotab[0::2]).iterbytes()
+        line_increments = (lnotab[1::2]).iterbytes()
 
         byte_num = 0
         line_num = self.f_code.co_firstlineno

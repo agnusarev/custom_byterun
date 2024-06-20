@@ -8,7 +8,7 @@ import textwrap
 import types
 import unittest
 
-import six
+from io import StringIO
 
 from byterun.pyvm2 import VirtualMachine, VirtualMachineError
 
@@ -57,7 +57,7 @@ class VmTestCase(unittest.TestCase):
 
         # Run the code through our VM.
 
-        vm_stdout = six.StringIO()
+        vm_stdout = StringIO()
         if CAPTURE_STDOUT:              # pragma: no branch
             sys.stdout = vm_stdout
         vm = VirtualMachine()
@@ -86,7 +86,7 @@ class VmTestCase(unittest.TestCase):
     def run_in_real_python(self, code):
         real_stdout = sys.stdout
 
-        py_stdout = six.StringIO()
+        py_stdout = StringIO()
         sys.stdout = py_stdout
 
         py_value = py_exc = None
