@@ -51,7 +51,7 @@ class Function(object):
         self._func = types.FunctionType(code, globs, **kw)
 
     def __repr__(self):  # pragma: no cover
-        return "<Function %s at 0x%08x>" % (self.func_name, id(self))
+        return f"<Function {self.func_name} at 0x{id(self):.08x}>"
 
     def __get__(self, instance, owner):
         if instance is not None:
@@ -90,9 +90,9 @@ class Method(object):
     def __repr__(self):  # pragma: no cover
         name = "%s.%s" % (self.im_class.__name__, self.im_func.func_name)
         if self.im_self is not None:
-            return "<Bound Method %s of %s>" % (name, self.im_self)
+            return f"<Bound Method {name} of {self.im_self}>"
         else:
-            return "<Unbound Method %s>" % (name,)
+            return f"<Unbound Method {name}>"
 
     def __call__(self, *args, **kwargs):
         if self.im_self is not None:
@@ -164,7 +164,7 @@ class Frame(object):
         self.generator = None
 
     def __repr__(self):  # pragma: no cover
-        return "<Frame at 0x%08x: %r @ %d>" % (id(self), self.f_code.co_filename, self.f_lineno)
+        return f"<Frame at 0x{id(self):.08x}: {self.f_code.co_filename!r} @ {self.f_lineno:d}>"
 
     def line_number(self):
         """Get the current line number the frame is executing."""

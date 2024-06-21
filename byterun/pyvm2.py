@@ -18,10 +18,6 @@ from .pyobj import Block, Cell, Frame, Function, Generator
 log = logging.getLogger(__name__)
 
 
-def byteint(b):
-    return b
-
-
 # Create a repr that won't overflow.
 repr_obj = reprlib.Repr()
 repr_obj.maxother = 120
@@ -30,7 +26,6 @@ repper = repr_obj.repr
 
 class VirtualMachineError(Exception):
     """For raising errors in the operation of the VM."""
-
     pass
 
 
@@ -127,7 +122,7 @@ class VirtualMachine(object):
         for f in self.frames:
             filename = f.f_code.co_filename
             lineno = f.line_number()
-            print('  File "%s", line %d, in %s' % (filename, lineno, f.f_code.co_name))
+            print(f'  File "{filename}", line {lineno:d}, in {f.f_code.co_name}')
             linecache.checkcache(filename)
             line = linecache.getline(filename, lineno, f.f_globals)
             if line:
@@ -174,7 +169,7 @@ class VirtualMachine(object):
             byteCode = currentOp.opcode
             byteName = currentOp.opname
         else:
-            byteCode = byteint(f.f_code.co_code[opoffset])
+            byteCode = f.f_code.co_code[opoffset]
             byteName = dis.opname[byteCode]
         f.f_lasti += 1
         arg = None
@@ -188,54 +183,56 @@ class VirtualMachine(object):
             # is already done by dis, and stored in next currentOp.
             # Lib/dis.py:_unpack_opargs
             return self.parse_byte_and_args()
-        if byteCode >= dis.HAVE_ARGUMENT:
-            if f.py36_opcodes:
-                intArg = currentOp.arg
-            else:
-                arg = f.f_code.co_code[f.f_lasti: f.f_lasti + 2]
-                f.f_lasti += 2
-                intArg = byteint(arg[0]) + (byteint(arg[1]) << 8)
+        if byteCode < dis.HAVE_ARGUMENT:
+            return byteName, arguments, opoffset
 
-            if byteCode in dis.hasconst:
-                arg = f.f_code.co_consts[intArg]
-            elif byteCode in dis.hasfree:
-                if intArg < len(f.f_code.co_cellvars):
-                    arg = f.f_code.co_cellvars[intArg]
-                else:
-                    var_idx = intArg - len(f.f_code.co_cellvars)
-                    arg = f.f_code.co_freevars[var_idx]
-            elif byteCode in dis.hasname:
-                arg = f.f_code.co_names[intArg]
-            elif byteCode in dis.hasjrel:
-                if f.py36_opcodes:
-                    arg = f.f_lasti + intArg // 2
-                else:
-                    arg = f.f_lasti + intArg
-            elif byteCode in dis.hasjabs:
-                if f.py36_opcodes:
-                    arg = intArg // 2
-                else:
-                    arg = intArg
-            elif byteCode in dis.haslocal:
-                arg = f.f_code.co_varnames[intArg]
+        if f.py36_opcodes:
+            intArg = currentOp.arg
+        else:
+            arg = f.f_code.co_code[f.f_lasti: f.f_lasti + 2]
+            f.f_lasti += 2
+            intArg = (arg[0]) + (arg[1] << 8)
+
+        if byteCode in dis.hasconst:
+            arg = f.f_code.co_consts[intArg]
+        elif byteCode in dis.hasfree:
+            if intArg < len(f.f_code.co_cellvars):
+                arg = f.f_code.co_cellvars[intArg]
+            else:
+                var_idx = intArg - len(f.f_code.co_cellvars)
+                arg = f.f_code.co_freevars[var_idx]
+        elif byteCode in dis.hasname:
+            arg = f.f_code.co_names[intArg]
+        elif byteCode in dis.hasjrel:
+            if f.py36_opcodes:
+                arg = f.f_lasti + intArg // 2
+            else:
+                arg = f.f_lasti + intArg
+        elif byteCode in dis.hasjabs:
+            if f.py36_opcodes:
+                arg = intArg // 2
             else:
                 arg = intArg
-            arguments = [arg]
+        elif byteCode in dis.haslocal:
+            arg = f.f_code.co_varnames[intArg]
+        else:
+            arg = intArg
+        arguments = [arg]
 
         return byteName, arguments, opoffset
 
     def log(self, byteName, arguments, opoffset):
         """Log arguments, block stack, and data stack for each opcode."""
-        op = "%d: %s" % (opoffset, byteName)
+        op = f"{opoffset:d}: {byteName}"
         if arguments:
-            op += " %r" % (arguments[0],)
+            op += f" {arguments[0]!r}"
         indent = "    " * (len(self.frames) - 1)
         stack_rep = repper(self.frame.stack)
         block_stack_rep = repper(self.frame.block_stack)
 
-        log.info("  %sdata: %s" % (indent, stack_rep))
-        log.info("  %sblks: %s" % (indent, block_stack_rep))
-        log.info("%s%s" % (indent, op))
+        log.info(f"  {indent}data: {stack_rep}")
+        log.info(f"  {indent}blks: {block_stack_rep}")
+        log.info(f"{indent}{op}")
 
     def dispatch(self, byteName, arguments):
         """Dispatch by bytename to the corresponding methods.
@@ -252,9 +249,9 @@ class VirtualMachine(object):
                 self.sliceOperator(byteName)
             else:
                 # dispatch
-                bytecode_fn = getattr(self, "byte_%s" % byteName, None)
+                bytecode_fn = getattr(self, f"byte_{byteName}", None)
                 if not bytecode_fn:  # pragma: no cover
-                    raise VirtualMachineError("unknown bytecode type: %s" % byteName)
+                    raise VirtualMachineError(f"unknown bytecode type: {byteName}")
                 why = bytecode_fn(*arguments)
 
         except Exception:
@@ -320,6 +317,7 @@ class VirtualMachine(object):
 
             # When unwinding the block stack, we need to keep track of why we
             # are doing it.
+            # print(byteName, arguments, opoffset)
             why = self.dispatch(byteName, arguments)
             if why == "exception":
                 # TODO: ceval calls PyTraceBack_Here, not sure what that does.
@@ -391,7 +389,7 @@ class VirtualMachine(object):
         elif name in frame.f_builtins:
             val = frame.f_builtins[name]
         else:
-            raise NameError("name '%s' is not defined" % name)
+            raise NameError(f"name '{name}' is not defined")
         self.push(val)
 
     def byte_STORE_NAME(self, name):
@@ -405,7 +403,7 @@ class VirtualMachine(object):
             val = self.frame.f_locals[name]
         else:
             raise UnboundLocalError(
-                "local variable '%s' referenced before assignment" % name
+                f"local variable '{name}' referenced before assignment"
             )
         self.push(val)
 
@@ -422,7 +420,7 @@ class VirtualMachine(object):
         elif name in f.f_builtins:
             val = f.f_builtins[name]
         else:
-            raise NameError("name '%s' is not defined" % name)
+            raise NameError(f"name '{name}' is not defined")
         self.push(val)
 
     def byte_STORE_GLOBAL(self, name):
@@ -500,7 +498,7 @@ class VirtualMachine(object):
         elif op == "OR":
             x |= y
         else:  # pragma: no cover
-            raise VirtualMachineError("Unknown in-place operator: %r" % op)
+            raise VirtualMachineError(f"Unknown in-place operator: {op!r}")
         self.push(x)
 
     def sliceOperator(self, op):
@@ -637,16 +635,14 @@ class VirtualMachine(object):
         the_set.add(val)
 
     def byte_MAP_ADD(self, count):
-        val, key = self.popn(2)
+        key, val = self.popn(2)
         the_map = self.peek(count)
         the_map[key] = val
 
     # Printing
 
-    if 0:  # Only used in the interactive interpreter, not in modules.
-
-        def byte_PRINT_EXPR(self):
-            print(self.pop())
+    def byte_PRINT_EXPR(self):
+        print(self.pop())
 
     def byte_PRINT_ITEM(self):
         item = self.pop()
@@ -975,13 +971,8 @@ class VirtualMachine(object):
             # The first parameter must be the correct type.
             if not isinstance(posargs[0], type(func.im_self)):
                 raise TypeError(
-                    "unbound method %s() must be called with %s instance "
-                    "as first argument (got %s instance instead)"
-                    % (
-                        func.im_func.func_name,
-                        func.im_class.__name__,
-                        type(posargs[0]).__name__,
-                    )
+                    f"unbound method {func.im_func.func_name}() must be called with {func.im_class.__name__} instance "
+                    f"as first argument (got {type(posargs[0]).__name__} instance instead)"
                 )
             func = func.im_func
         retval = func(*posargs, **namedargs)

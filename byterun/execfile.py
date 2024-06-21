@@ -65,7 +65,7 @@ def run_python_module(modulename, args):
 
             # Complain if this is a magic non-file module.
             if openfile is None and pathname is None:
-                raise NoSource("module does not live in a file: %r" % modulename)
+                raise NoSource("module does not live in a file: {modulename!r}")
 
             # If `modulename` is actually a package, not a mere module, then we
             # pretend to be Python 2.7 and try running its __main__.py script.
@@ -119,7 +119,7 @@ def run_python_file(filename, args, package=None):
         try:
             source_file = open_source(filename)
         except IOError:
-            raise NoSource("No file to run: %r" % filename)
+            raise NoSource("No file to run: {filename!r}")
 
         try:
             source = source_file.read()
