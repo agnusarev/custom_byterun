@@ -3,7 +3,10 @@
 import collections
 import dis
 import inspect
+import linecache
 import re
+from copy import copy
+from sys import stderr
 import types
 
 
@@ -142,12 +145,23 @@ class Frame(object):
         self.f_locals = f_locals
         self.f_back = f_back
         self.stack = []
-        if f_back:
+        # if f_back:
+        #     self.f_builtins = f_back.f_builtins
+        # else:
+        #     self.f_builtins = f_locals["__builtins__"]
+        #     if hasattr(self.f_builtins, "__dict__"):
+        #         self.f_builtins = self.f_builtins.__dict__
+        if f_back and f_back.f_globals is f_globals:
+            # If we share the globals, we share the builtins.
             self.f_builtins = f_back.f_builtins
         else:
-            self.f_builtins = f_locals["__builtins__"]
-            if hasattr(self.f_builtins, "__dict__"):
-                self.f_builtins = self.f_builtins.__dict__
+            try:
+                self.f_builtins = f_globals["__builtins__"]
+                if hasattr(self.f_builtins, "__dict__"):
+                    self.f_builtins = self.f_builtins.__dict__
+            except KeyError:
+                # No builtins! Make up a minimal one with None.
+                self.f_builtins = {"None": None}
 
         self.f_lineno = f_code.co_firstlineno
         self.f_lasti = 0
@@ -164,7 +178,7 @@ class Frame(object):
         self.generator = None
 
     def __repr__(self):  # pragma: no cover
-        return f"<Frame at 0x{id(self):.08x}: {self.f_code.co_filename!r} @ {self.f_lineno:d}>"
+        return f"<Frame at 0x{id(self)}: {self.f_code.co_filename!r} @ {self.f_lineno:d}>"
 
     def line_number(self):
         """Get the current line number the frame is executing."""
@@ -192,6 +206,8 @@ class Generator(object):
         self.vm = vm
         self.started = False
         self.finished = False
+        self.gi_code = g_frame.f_code
+        self.__name__ = g_frame.f_code.co_name
 
     def __iter__(self):
         return self
@@ -212,3 +228,39 @@ class Generator(object):
         return val
 
     __next__ = next
+
+class Traceback(object):
+    def __init__(self, frame):
+        self.tb_next = frame.f_back
+        self.tb_lasti = frame.f_lasti
+        self.tb_lineno = frame.f_lineno
+        self.tb_frame = frame
+
+    # Note: this can be removed when we have our own compatibility traceback.
+    def print_tb(self, limit=None, file=stderr):
+        """Like traceback.tb, but is a method."""
+        tb = self
+        while tb:
+            f = tb.tb_frame
+            filename = f.f_code.co_filename
+            lineno = f.line_number()
+            print(
+                '  File "%s", line %d, in %s' % (filename, lineno, f.f_code.co_name),
+                file=file,
+            )
+            linecache.checkcache(filename)
+            line = linecache.getline(filename, lineno, f.f_globals)
+            if line:
+                print("    " + line.strip(), file=file)
+            tb = tb.tb_next
+
+
+def traceback_from_frame(frame):
+    tb = None
+
+    while frame:
+        next_tb = Traceback(copy(frame))
+        next_tb.tb_next = tb
+        tb = next_tb
+        frame = frame.f_back
+    return tb

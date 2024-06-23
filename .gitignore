@@ -8,3 +8,5 @@ MANIFEST
 .venv/
 .pytest_cache/
 .mypy_cache/
+
+test.py

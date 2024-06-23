@@ -295,7 +295,7 @@ class TestIt(vmtest.VmTestCase):
                 def meth(self, y):
                     return self.x * y
             thing1 = Thing(2)
-            print(Thing.meth(14))
+            print(thing1.meth(14))
             """, raises=TypeError)
 
     def test_calling_subclass_methods(self):
