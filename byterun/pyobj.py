@@ -140,7 +140,7 @@ Block = collections.namedtuple("Block", "type, handler, level")
 class Frame(object):
     def __init__(self, f_code, f_globals, f_locals, f_closure, f_back):
         self.f_code = f_code
-        self.py36_opcodes = list(dis.get_instructions(self.f_code))
+        self.opcodes = list(dis.get_instructions(self.f_code))
         self.f_globals = f_globals
         self.f_locals = f_locals
         self.f_back = f_back

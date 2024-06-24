@@ -164,8 +164,8 @@ class VirtualMachine(object):
         In Python3.6 the format is 2 bytes per instruction."""
         f = self.frame
         opoffset = f.f_lasti
-        if f.py36_opcodes:
-            currentOp = f.py36_opcodes[opoffset]
+        if f.opcodes:
+            currentOp = f.opcodes[opoffset]
             byteCode = currentOp.opcode
             byteName = currentOp.opname
         else:
@@ -175,7 +175,7 @@ class VirtualMachine(object):
         f.f_lasti += 1
         arg = None
         arguments = []
-        if f.py36_opcodes and byteCode == dis.EXTENDED_ARG:
+        if f.opcodes and byteCode == dis.EXTENDED_ARG:
             # Prefixes any opcode which has an argument too big to fit into the
             # default two bytes. ext holds two additional bytes which, taken
             # together with the subsequent opcode’s argument, comprise a
@@ -187,7 +187,7 @@ class VirtualMachine(object):
         if byteCode < dis.HAVE_ARGUMENT:
             return byteName, arguments, opoffset
 
-        if f.py36_opcodes:
+        if f.opcodes:
             intArg = currentOp.arg
         else:
             arg = f.f_code.co_code[f.f_lasti: f.f_lasti + 2]
@@ -206,13 +206,13 @@ class VirtualMachine(object):
             arg = f.f_code.co_names[intArg]
         elif byteCode in dis.hasjrel:
             intArg += intArg
-            if f.py36_opcodes:
+            if f.opcodes:
                 arg = f.f_lasti + intArg // 2
             else:
                 arg = f.f_lasti + intArg
         elif byteCode in dis.hasjabs:
             intArg += intArg
-            if f.py36_opcodes:
+            if f.opcodes:
                 arg = intArg // 2
             else:
                 arg = intArg
@@ -978,18 +978,12 @@ class VirtualMachine(object):
             if func.im_self is not None:
                 posargs.insert(0, func.im_self)
             # The first parameter must be the correct type.
-            if not isinstance(posargs[0], type(func.im_class)):
+            if not isinstance(posargs[0], func.im_class) and posargs[0] is not func.im_class:
                 raise TypeError(
                     f"unbound method {func.im_func.func_name}() must be called with {func.im_class.__name__} instance "
                     f"as first argument (got {type(posargs[0]).__name__} instance instead)"
                 )
             func = func.im_func
-        # print(func)
-        # print(posargs)
-        # print(namedargs)
-        # import inspect
-        # if inspect.isclass(func):
-        #     print("jdkjfghdkjfgh")
         retval = func(*posargs, **namedargs)
         self.push(retval)
 

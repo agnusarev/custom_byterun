@@ -287,7 +287,7 @@ class TestIt(vmtest.VmTestCase):
             print(thing1.meth(4), thing2.meth(5))
             """)
 
-    def test_calling_methods_wrong(self):
+    def test_calling_methods(self):
         self.assert_ok("""\
             class Thing(object):
                 def __init__(self, x):
@@ -296,7 +296,7 @@ class TestIt(vmtest.VmTestCase):
                     return self.x * y
             thing1 = Thing(2)
             print(thing1.meth(14))
-            """, raises=TypeError)
+            """)
 
     def test_calling_subclass_methods(self):
         self.assert_ok("""\
