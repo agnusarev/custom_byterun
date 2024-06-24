@@ -13,7 +13,7 @@ import reprlib
 import sys
 import types
 
-from .pyobj import Block, Cell, Frame, Function, Generator
+from .pyobj import Block, Cell, Frame, Function, Generator, traceback_from_frame
 
 log = logging.getLogger(__name__)
 
@@ -164,17 +164,18 @@ class VirtualMachine(object):
         In Python3.6 the format is 2 bytes per instruction."""
         f = self.frame
         opoffset = f.f_lasti
-        if f.py36_opcodes:
-            currentOp = f.py36_opcodes[opoffset]
+        if f.opcodes:
+            currentOp = f.opcodes[opoffset]
             byteCode = currentOp.opcode
             byteName = currentOp.opname
         else:
             byteCode = f.f_code.co_code[opoffset]
             byteName = dis.opname[byteCode]
+
         f.f_lasti += 1
         arg = None
         arguments = []
-        if f.py36_opcodes and byteCode == dis.EXTENDED_ARG:
+        if f.opcodes and byteCode == dis.EXTENDED_ARG:
             # Prefixes any opcode which has an argument too big to fit into the
             # default two bytes. ext holds two additional bytes which, taken
             # together with the subsequent opcode’s argument, comprise a
@@ -186,7 +187,7 @@ class VirtualMachine(object):
         if byteCode < dis.HAVE_ARGUMENT:
             return byteName, arguments, opoffset
 
-        if f.py36_opcodes:
+        if f.opcodes:
             intArg = currentOp.arg
         else:
             arg = f.f_code.co_code[f.f_lasti: f.f_lasti + 2]
@@ -204,12 +205,14 @@ class VirtualMachine(object):
         elif byteCode in dis.hasname:
             arg = f.f_code.co_names[intArg]
         elif byteCode in dis.hasjrel:
-            if f.py36_opcodes:
+            intArg += intArg
+            if f.opcodes:
                 arg = f.f_lasti + intArg // 2
             else:
                 arg = f.f_lasti + intArg
         elif byteCode in dis.hasjabs:
-            if f.py36_opcodes:
+            intArg += intArg
+            if f.opcodes:
                 arg = intArg // 2
             else:
                 arg = intArg
@@ -353,6 +356,10 @@ class VirtualMachine(object):
 
     def byte_POP_TOP(self):
         self.pop()
+
+    def byte_NOP(self):
+        """Do nothing code. Used as a placeholder by the bytecode optimizer."""
+        pass
 
     def byte_DUP_TOP(self):
         self.push(self.top())
@@ -934,7 +941,9 @@ class VirtualMachine(object):
     def byte_CALL_FUNCTION(self, arg):
         try:
             return self.call_function(arg, [], {})
-        except TypeError:
+        except TypeError as exc:
+            tb = self.last_traceback = traceback_from_frame(self.frame)
+            self.last_exception = (TypeError, exc, tb)
             return "exception"
 
     def byte_CALL_FUNCTION_VAR(self, arg):
@@ -969,7 +978,7 @@ class VirtualMachine(object):
             if func.im_self is not None:
                 posargs.insert(0, func.im_self)
             # The first parameter must be the correct type.
-            if not isinstance(posargs[0], type(func.im_self)):
+            if not isinstance(posargs[0], func.im_class) and posargs[0] is not func.im_class:
                 raise TypeError(
                     f"unbound method {func.im_func.func_name}() must be called with {func.im_class.__name__} instance "
                     f"as first argument (got {type(posargs[0]).__name__} instance instead)"
@@ -1101,6 +1110,15 @@ class VirtualMachine(object):
         if not issubclass(TOS1, TOS):
             self.jump(target)
         return
+
+    def byte_GEN_START(self, kind):
+        """Pops TOS. If TOS was not None, raises an exception. The kind
+        operand corresponds to the type of generator or coroutine and
+        determines the error message. The legal kinds are 0 for
+        generator, 1 for coroutine, and 2 for async generator.
+        """
+        self.pop()
+        assert kind in (0, 1, None)
 
     def byte_CONTAINS_OP(self, invert: int):
         """Performs in comparison, or not in if invert is 1."""
